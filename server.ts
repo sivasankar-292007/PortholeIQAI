@@ -12,8 +12,56 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware
 app.use(express.json({ limit: '10mb' }));
 
+// ---------------------------------------------------------------------------
+// 1. Robust CORS Configuration
+// Allows requests from AI Studio frontend origin and deployed clients
+// ---------------------------------------------------------------------------
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  // Allow all origins or reflect the incoming origin for credentials
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// ---------------------------------------------------------------------------
+// 2. Health Check Endpoint
+// ---------------------------------------------------------------------------
+app.get('/api/health', (_req: Request, res: Response) => {
+  const hasApiKey = Boolean(process.env.EMAIL_API_KEY && process.env.EMAIL_API_KEY.trim());
+  const hasMunicipalEmail = Boolean(process.env.MUNICIPAL_EMAIL && process.env.MUNICIPAL_EMAIL.trim());
+
+  return res.json({
+    status: 'ok',
+    service: 'PotholeIQ Backend',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV || 'development',
+    corsEnabled: true,
+    features: {
+      healthCheck: true,
+      complaintsApi: true,
+      emailDispatch: hasApiKey && hasMunicipalEmail,
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Email Dispatcher Types and Implementation
+// ---------------------------------------------------------------------------
 interface ComplaintEmailPayload {
   complaintId: string;
   reporterName: string;
@@ -259,7 +307,279 @@ Action Required: Please inspect the site and assign a repair engineer in the Pot
   }
 }
 
-// Route: Send complaint email to MUNICIPAL_EMAIL using EMAIL_API_KEY
+// ---------------------------------------------------------------------------
+// 4. Complaints Store & Endpoints
+// ---------------------------------------------------------------------------
+interface ComplaintRecord {
+  id: string;
+  reporterId?: string;
+  reporterName: string;
+  reporterEmail?: string;
+  photoUrl: string;
+  latitude: number;
+  longitude: number;
+  address: string;
+  landmark?: string;
+  ward?: string;
+  aiPrediction: string;
+  aiConfidence: number;
+  estimatedSeverity: string;
+  boxCoveragePercent?: number;
+  aiDetails?: any;
+  status: 'Pending' | 'Assigned' | 'In Progress' | 'Completed' | 'Rejected';
+  priority?: string;
+  submittedAt: string;
+  daysIgnored?: number;
+  assignedEngineerId?: string;
+  assignedEngineerName?: string;
+  assignedEngineerEmail?: string;
+  assignedAt?: string;
+  repairDeadline?: string;
+  repairStartedAt?: string;
+  completedAt?: string;
+  afterPhotoUrl?: string;
+  repairNotes?: string;
+  repairMaterialsUsed?: string;
+  rejectionReason?: string;
+  officerNotes?: string;
+  notificationStatus?: 'sent' | 'pending' | 'failed';
+}
+
+const complaintsStore: Map<string, ComplaintRecord> = new Map();
+
+function seedInitialComplaints() {
+  if (complaintsStore.size > 0) return;
+  const initialData: ComplaintRecord[] = [
+    {
+      id: 'PIQ-101',
+      reporterId: 'cit-01',
+      reporterName: 'Anand Verma',
+      reporterEmail: 'anand.v@gmail.com',
+      photoUrl: 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+      latitude: 12.9716,
+      longitude: 77.5946,
+      address: 'Outer Ring Road, Near Tech Park Junction, Ward 15',
+      landmark: 'Opposite Metro Pillar 142',
+      ward: 'Ward 15 - East Zone',
+      aiPrediction: 'pothole',
+      aiConfidence: 0.94,
+      estimatedSeverity: 'Dangerous',
+      boxCoveragePercent: 22,
+      status: 'Pending',
+      priority: 'Urgent',
+      submittedAt: new Date(Date.now() - 86400000 * 12).toISOString(),
+      daysIgnored: 12,
+      notificationStatus: 'sent',
+    },
+    {
+      id: 'PIQ-102',
+      reporterId: 'cit-02',
+      reporterName: 'Pooja Hegde',
+      reporterEmail: 'pooja.h@outlook.com',
+      photoUrl: 'https://images.unsplash.com/photo-1584463699039-387b99c75128?auto=format&fit=crop&w=800&q=80',
+      latitude: 12.9352,
+      longitude: 77.6245,
+      address: 'Koramangala 4th Block, 80 Feet Road',
+      landmark: 'Near Sony World Signal',
+      ward: 'Ward 68 - South Zone',
+      aiPrediction: 'pothole',
+      aiConfidence: 0.88,
+      estimatedSeverity: 'Medium',
+      boxCoveragePercent: 12,
+      status: 'Pending',
+      priority: 'High',
+      submittedAt: new Date(Date.now() - 86400000 * 8).toISOString(),
+      daysIgnored: 8,
+      notificationStatus: 'sent',
+    },
+    {
+      id: 'PIQ-103',
+      reporterId: 'cit-03',
+      reporterName: 'Karthik Srinivasan',
+      reporterEmail: 'karthik.s@yahoo.com',
+      photoUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18f15f6?auto=format&fit=crop&w=800&q=80',
+      latitude: 12.9784,
+      longitude: 77.6408,
+      address: '100 Feet Road, Indiranagar, Near Metro',
+      landmark: 'In front of 12th Main Crossing',
+      ward: 'Ward 24 - East Zone',
+      aiPrediction: 'pothole',
+      aiConfidence: 0.91,
+      estimatedSeverity: 'Dangerous',
+      boxCoveragePercent: 19,
+      status: 'Completed',
+      priority: 'Urgent',
+      submittedAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+      completedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      assignedEngineerId: 'eng-1',
+      assignedEngineerName: 'Eng. Rajesh Kumar',
+      afterPhotoUrl: 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&w=800&q=80',
+      repairNotes: 'Excavated 10cm base, filled cold-mix bitumen and tamped to road grade.',
+      daysIgnored: 3,
+      notificationStatus: 'sent',
+    },
+    {
+      id: 'PIQ-104',
+      reporterId: 'cit-04',
+      reporterName: 'Meera Nambiar',
+      reporterEmail: 'meera.n@gmail.com',
+      photoUrl: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=800&q=80',
+      latitude: 12.9834,
+      longitude: 77.6111,
+      address: 'Halasuru Main Road, Opposite Post Office',
+      landmark: 'Near Halasuru Lake Gate',
+      ward: 'Ward 31 - East Zone',
+      aiPrediction: 'pothole',
+      aiConfidence: 0.86,
+      estimatedSeverity: 'High',
+      boxCoveragePercent: 15,
+      status: 'Assigned',
+      priority: 'High',
+      assignedEngineerId: 'eng-1',
+      assignedEngineerName: 'Eng. Rajesh Kumar',
+      assignedEngineerEmail: 'rajesh.kumar@citycorp.gov',
+      assignedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+      repairDeadline: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
+      submittedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      daysIgnored: 2,
+      notificationStatus: 'sent',
+    },
+  ];
+  for (const c of initialData) {
+    complaintsStore.set(c.id, c);
+  }
+}
+seedInitialComplaints();
+
+// Route: Retrieve all complaints
+app.get('/api/complaints', (_req: Request, res: Response) => {
+  const list = Array.from(complaintsStore.values()).sort((a, b) => {
+    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+  });
+  return res.json({
+    success: true,
+    count: list.length,
+    complaints: list,
+  });
+});
+
+// Route: Retrieve single complaint by ID
+app.get('/api/complaints/:id', (req: Request, res: Response) => {
+  const item = complaintsStore.get(req.params.id);
+  if (!item) {
+    return res.status(404).json({ success: false, error: `Complaint #${req.params.id} not found` });
+  }
+  return res.json({ success: true, complaint: item });
+});
+
+// Route: Submit new complaint
+app.post('/api/complaints', async (req: Request, res: Response) => {
+  try {
+    const body = req.body;
+    if (!body || body.latitude === undefined || body.longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required complaint coordinates (latitude and longitude are required)',
+      });
+    }
+
+    const complaintId = body.id || `PIQ-${Date.now().toString().slice(-4)}`;
+    const now = new Date().toISOString();
+
+    const newRecord: ComplaintRecord = {
+      id: complaintId,
+      reporterId: body.reporterId || 'cit-anonymous',
+      reporterName: body.reporterName || 'Citizen Reporter',
+      reporterEmail: body.reporterEmail,
+      photoUrl: body.photoUrl || '',
+      latitude: Number(body.latitude),
+      longitude: Number(body.longitude),
+      address: body.address || `Roadway at (${body.latitude}, ${body.longitude})`,
+      landmark: body.landmark,
+      ward: body.ward,
+      aiPrediction: body.aiPrediction || 'pothole',
+      aiConfidence: Number(body.aiConfidence) || 0.9,
+      estimatedSeverity: body.estimatedSeverity || 'Medium',
+      boxCoveragePercent: body.boxCoveragePercent || 15,
+      aiDetails: body.aiDetails,
+      status: 'Pending',
+      priority: body.priority || 'High',
+      submittedAt: now,
+      daysIgnored: 0,
+      notificationStatus: 'sent',
+    };
+
+    complaintsStore.set(complaintId, newRecord);
+
+    // If email secrets are configured, dispatch municipal alert email
+    let emailResult = null;
+    if (process.env.EMAIL_API_KEY && process.env.MUNICIPAL_EMAIL) {
+      emailResult = await sendMunicipalComplaintEmail({
+        complaintId,
+        reporterName: newRecord.reporterName,
+        severity: newRecord.estimatedSeverity,
+        aiConfidence: newRecord.aiConfidence,
+        latitude: newRecord.latitude,
+        longitude: newRecord.longitude,
+        photoUrl: newRecord.photoUrl,
+        address: newRecord.address,
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Complaint submitted successfully',
+      complaint: newRecord,
+      emailDispatched: emailResult?.success ?? false,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Internal server error submitting complaint',
+    });
+  }
+});
+
+// Route: Update complaint status / assignment / repair
+const handleComplaintUpdate = (req: Request, res: Response) => {
+  const id = req.params.id;
+  const existing = complaintsStore.get(id);
+
+  if (!existing) {
+    const upserted: ComplaintRecord = {
+      id,
+      reporterName: req.body.reporterName || 'Citizen Reporter',
+      photoUrl: req.body.photoUrl || '',
+      latitude: req.body.latitude || 12.9716,
+      longitude: req.body.longitude || 77.5946,
+      address: req.body.address || 'Roadway',
+      aiPrediction: 'pothole',
+      aiConfidence: 0.9,
+      estimatedSeverity: 'Medium',
+      submittedAt: new Date().toISOString(),
+      status: req.body.status || 'Pending',
+      ...req.body,
+    };
+    complaintsStore.set(id, upserted);
+    return res.json({ success: true, complaint: upserted });
+  }
+
+  const updated: ComplaintRecord = {
+    ...existing,
+    ...req.body,
+    id, // protect immutable ID
+  };
+
+  complaintsStore.set(id, updated);
+  return res.json({ success: true, complaint: updated });
+};
+
+app.patch('/api/complaints/:id/status', handleComplaintUpdate);
+app.patch('/api/complaints/:id', handleComplaintUpdate);
+app.put('/api/complaints/:id/status', handleComplaintUpdate);
+app.put('/api/complaints/:id', handleComplaintUpdate);
+
+// Route: Send complaint email directly to MUNICIPAL_EMAIL using EMAIL_API_KEY
 app.post('/api/send-complaint-email', async (req: Request, res: Response) => {
   try {
     const payload: ComplaintEmailPayload = req.body;
@@ -305,6 +625,9 @@ app.get('/api/email-config-status', (_req: Request, res: Response) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 5. App Startup & Static/Vite Mounting
+// ---------------------------------------------------------------------------
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
 

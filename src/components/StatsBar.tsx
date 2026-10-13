@@ -1,9 +1,10 @@
 import React from 'react';
 import { usePothole } from '../context/PotholeContext';
 import { Clock, CheckCircle2, AlertTriangle, Cpu, Sliders } from 'lucide-react';
+import { StatsBarSkeleton } from './LoadingSkeleton';
 
 export const StatsBar: React.FC = () => {
-  const { complaints, calculateDaysIgnored, aiThreshold, setAiThreshold } = usePothole();
+  const { complaints, calculateDaysIgnored, aiThreshold, setAiThreshold, isLoadingBackend } = usePothole();
 
   const pendingComplaints = complaints.filter((c) => c.status === 'Pending');
   const assignedComplaints = complaints.filter((c) => c.status === 'Assigned');
@@ -17,8 +18,11 @@ export const StatsBar: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-2">
-      {/* 3 Main KPI Cards matching the exact layout in the video demo */}
-      <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-3">
+      {/* 3 Main KPI Cards or Skeleton while loading */}
+      {isLoadingBackend && complaints.length === 0 ? (
+        <StatsBarSkeleton />
+      ) : (
+        <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-3">
         {/* Pending Card */}
         <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm text-center">
           <div className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
@@ -61,6 +65,7 @@ export const StatsBar: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Banner matching the video demo note with interactive threshold slider */}
       <div className="bg-amber-50/90 border border-amber-200/80 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900">

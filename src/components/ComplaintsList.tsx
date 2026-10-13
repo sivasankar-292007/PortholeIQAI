@@ -10,15 +10,18 @@ import {
   ChevronRight,
   ExternalLink,
   ShieldCheck,
-  Wrench
+  Wrench,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
+import { ComplaintListSkeleton, BackendSyncBanner } from './LoadingSkeleton';
 
 interface ComplaintsListProps {
   onSelectComplaint: (complaint: Complaint) => void;
 }
 
 export const ComplaintsList: React.FC<ComplaintsListProps> = ({ onSelectComplaint }) => {
-  const { complaints, calculateDaysIgnored } = usePothole();
+  const { complaints, calculateDaysIgnored, isLoadingBackend, refreshBackend } = usePothole();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | ComplaintStatus>('All');
@@ -39,20 +42,41 @@ export const ComplaintsList: React.FC<ComplaintsListProps> = ({ onSelectComplain
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-4">
+      {/* Backend Sync Banner */}
+      <BackendSyncBanner
+        isLoading={isLoadingBackend}
+        onRefresh={refreshBackend}
+        message="Syncing complaints with live Render backend..."
+      />
+
       {/* Header & Search */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              All complaints
+            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>All complaints</span>
+              {isLoadingBackend && (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+              )}
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
               Every report displays AI confidence, verified location, and live days-ignored counter.
             </p>
           </div>
 
-          <div className="text-xs text-slate-400 font-mono">
-            Total {filtered.length} reports
+          <div className="flex items-center gap-3">
+            <button
+              onClick={refreshBackend}
+              disabled={isLoadingBackend}
+              className="px-2.5 py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Refresh complaints from backend"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBackend ? 'animate-spin text-amber-600' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            <div className="text-xs text-slate-400 font-mono">
+              Total {filtered.length} reports
+            </div>
           </div>
         </div>
 
@@ -96,9 +120,11 @@ export const ComplaintsList: React.FC<ComplaintsListProps> = ({ onSelectComplain
         </div>
       </div>
 
-      {/* Complaints List Cards matching exact video design */}
+      {/* Complaints List Cards or Skeletons */}
       <div className="space-y-3">
-        {filtered.length === 0 ? (
+        {isLoadingBackend && complaints.length === 0 ? (
+          <ComplaintListSkeleton count={4} />
+        ) : filtered.length === 0 ? (
           <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center text-slate-500 text-xs">
             No complaints matching your search filters.
           </div>

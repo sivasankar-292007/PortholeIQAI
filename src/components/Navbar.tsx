@@ -29,14 +29,24 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAndroidGuide,
   onOpenAuth
 }) => {
-  const { currentUser, switchRole, resetSampleData, aiThreshold, setAiThreshold, isFirebaseActive } = usePothole();
+  const {
+    currentUser,
+    switchRole,
+    resetSampleData,
+    aiThreshold,
+    setAiThreshold,
+    isFirebaseActive,
+    backendStatus,
+    refreshBackend,
+    isLoadingBackend
+  } = usePothole();
 
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-40 shadow-md">
       {/* Top Banner: SDG 11 Branding & Role Fast-Switcher for College Presentation */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 text-xs">
-        {/* SDG 11 Badge & Firebase Status */}
-        <div className="flex items-center gap-2">
+        {/* SDG 11 Badge, Firebase Status & Render Backend Status */}
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="bg-[#E5A33D] text-slate-950 font-bold px-2 py-0.5 rounded text-[11px] tracking-wide flex items-center gap-1">
             <span>SDG 11</span>
           </div>
@@ -60,6 +70,39 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             ></span>
             <span>{isFirebaseActive ? 'Firebase: Live Cloud' : 'Firebase: Demo Mode'}</span>
+          </button>
+
+          {/* Render Backend Connection Status */}
+          <button
+            onClick={() => refreshBackend()}
+            disabled={isLoadingBackend}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide flex items-center gap-1 cursor-pointer transition-colors ${
+              backendStatus.isConnected
+                ? backendStatus.mode === 'render_direct'
+                  ? 'bg-sky-950 text-sky-300 border border-sky-700 hover:bg-sky-900'
+                  : 'bg-indigo-950 text-indigo-300 border border-indigo-700 hover:bg-indigo-900'
+                : 'bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900'
+            }`}
+            title={`Backend Base: ${backendStatus.url}\nHealth: ${backendStatus.healthData?.status || 'Testing'}\nMode: ${backendStatus.mode}\nClick to re-ping /api/health`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isLoadingBackend
+                  ? 'bg-amber-400 animate-pulse'
+                  : backendStatus.isConnected
+                  ? 'bg-sky-400'
+                  : 'bg-amber-400'
+              }`}
+            ></span>
+            <span>
+              {isLoadingBackend
+                ? 'Checking Backend...'
+                : backendStatus.isConnected
+                ? backendStatus.mode === 'render_direct'
+                  ? 'Render Backend: Live'
+                  : 'Backend: Connected'
+                : 'Backend: Retrying'}
+            </span>
           </button>
         </div>
 

@@ -12,6 +12,7 @@ import { emailService } from '../services/emailService';
 import { isFirebaseConfigured } from '../firebase';
 import { firebaseDataService } from '../services/firebaseService';
 import { authService } from '../services/authService';
+import { apiService, BackendStatusState } from '../services/apiService';
 
 // Pre-defined demo users for quick role switching during exhibitions
 export const DEMO_USERS: Record<UserRole, UserProfile> = {
@@ -85,6 +86,11 @@ interface PotholeContextType {
   firestorePermissionWarning: boolean;
   dismissPermissionWarning: () => void;
   retryEmailNotification: (logId: string) => Promise<boolean>;
+
+  // Backend Integration State
+  backendStatus: BackendStatusState;
+  refreshBackend: () => Promise<void>;
+  isLoadingBackend: boolean;
 }
 
 const PotholeContext = createContext<PotholeContextType | undefined>(undefined);
@@ -115,6 +121,48 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
     return INITIAL_COMPLAINTS;
   });
+
+  // Backend Integration State
+  const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
+  const [backendStatus, setBackendStatus] = useState<BackendStatusState>(() => apiService.getState());
+
+  useEffect(() => {
+    const unsub = apiService.subscribeStatus((st) => setBackendStatus(st));
+    return unsub;
+  }, []);
+
+  const refreshBackend = async () => {
+    setIsLoadingBackend(true);
+    try {
+      console.info('[PotholeIQ] Verifying backend connectivity via /api/health...');
+      await apiService.checkHealth().catch((err) => {
+        console.warn('[PotholeIQ] Health check notice:', err?.message || err);
+      });
+      const remoteComplaints = await apiService.getComplaints().catch(() => []);
+      if (remoteComplaints && remoteComplaints.length > 0) {
+        setComplaints((prev) => {
+          const map = new Map<string, Complaint>();
+          for (const c of prev) {
+            map.set(c.id, c);
+          }
+          for (const rc of remoteComplaints) {
+            map.set(rc.id, rc);
+          }
+          return Array.from(map.values()).sort(
+            (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+          );
+        });
+      }
+    } catch (e) {
+      console.warn('[PotholeIQ] Backend refresh notice:', e);
+    } finally {
+      setIsLoadingBackend(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshBackend();
+  }, []);
 
   // Keep localStorage updated when in local/demo mode
   useEffect(() => {
@@ -299,6 +347,13 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Delegate to Firestore & Storage service
     const createdComplaint = await firebaseDataService.createComplaintDoc(data, assignedId);
 
+    // Synchronize with Render Backend API
+    try {
+      await apiService.createComplaint(createdComplaint);
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend create complaint sync notice:', apiErr);
+    }
+
     // Dispatch municipal office email alert log
     await emailService.notifyMunicipalOfficeOnSubmission(createdComplaint);
     setEmailLogs(emailService.getLogs());
@@ -324,6 +379,21 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!engineer) return false;
 
     await firebaseDataService.assignComplaintDoc(complaintId, engineer, deadline, priority, notes);
+
+    // Synchronize assignment with Render Backend API
+    try {
+      await apiService.updateComplaintStatus(complaintId, {
+        status: 'Assigned',
+        assignedEngineerId: engineer.id,
+        assignedEngineerName: engineer.name,
+        assignedEngineerEmail: engineer.email,
+        repairDeadline: deadline,
+        priority,
+        officerNotes: notes
+      });
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend assign sync notice:', apiErr);
+    }
 
     let targetComplaint: Complaint | null = null;
     setComplaints((prev) =>
@@ -375,6 +445,16 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     await firebaseDataService.startRepairDoc(complaintId);
 
+    // Synchronize start repair status with Render Backend API
+    try {
+      await apiService.updateComplaintStatus(complaintId, {
+        status: 'In Progress',
+        repairStartedAt: new Date().toISOString()
+      });
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend start repair sync notice:', apiErr);
+    }
+
     setComplaints((prev) =>
       prev.map((c) => {
         if (c.id === complaintId) {
@@ -416,6 +496,20 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
 
     const now = new Date().toISOString();
+
+    // Synchronize completion with Render Backend API
+    try {
+      await apiService.updateComplaintStatus(complaintId, {
+        status: 'Completed',
+        completedAt: now,
+        afterPhotoUrl: uploadedUrl,
+        repairNotes,
+        repairMaterialsUsed: materialsUsed
+      });
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend complete repair sync notice:', apiErr);
+    }
+
     let updatedComplaint: Complaint | null = null;
 
     setComplaints((prev) =>
@@ -451,6 +545,15 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
   const reopenComplaint = async (complaintId: string): Promise<boolean> => {
     await firebaseDataService.reopenComplaintDoc(complaintId);
 
+    // Synchronize reopen with Render Backend API
+    try {
+      await apiService.updateComplaintStatus(complaintId, {
+        status: 'Pending'
+      });
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend reopen sync notice:', apiErr);
+    }
+
     setComplaints((prev) =>
       prev.map((c) => {
         if (c.id === complaintId) {
@@ -475,6 +578,16 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
       status: 'Rejected',
       rejectionReason: reason
     });
+
+    // Synchronize rejection with Render Backend API
+    try {
+      await apiService.updateComplaintStatus(complaintId, {
+        status: 'Rejected',
+        rejectionReason: reason
+      });
+    } catch (apiErr) {
+      console.warn('[PotholeIQ] Backend reject sync notice:', apiErr);
+    }
 
     setComplaints((prev) =>
       prev.map((c) => {
@@ -530,7 +643,10 @@ export const PotholeProvider: React.FC<{ children: ReactNode }> = ({ children })
         selectedComplaintId,
         setSelectedComplaintId,
         firestorePermissionWarning,
-        dismissPermissionWarning: () => setFirestorePermissionWarning(false)
+        dismissPermissionWarning: () => setFirestorePermissionWarning(false),
+        backendStatus,
+        refreshBackend,
+        isLoadingBackend
       }}
     >
       {children}

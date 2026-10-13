@@ -14,16 +14,27 @@ import {
   AlertTriangle,
   FileText,
   ShieldCheck,
-  Check
+  Check,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { EngineerWorkOrderSkeleton, BackendSyncBanner } from './LoadingSkeleton';
 
 interface EngineerDashboardProps {
   onSelectComplaint: (complaint: Complaint) => void;
 }
 
 export const EngineerDashboard: React.FC<EngineerDashboardProps> = ({ onSelectComplaint }) => {
-  const { currentUser, complaints, startRepair, completeRepair, calculateDaysIgnored } = usePothole();
+  const {
+    currentUser,
+    complaints,
+    startRepair,
+    completeRepair,
+    calculateDaysIgnored,
+    isLoadingBackend,
+    refreshBackend
+  } = usePothole();
 
   // Completion modal state
   const [completingComplaint, setCompletingComplaint] = useState<Complaint | null>(null);
@@ -75,6 +86,13 @@ export const EngineerDashboard: React.FC<EngineerDashboardProps> = ({ onSelectCo
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-4">
+      {/* Backend Sync Banner */}
+      <BackendSyncBanner
+        isLoading={isLoadingBackend}
+        onRefresh={refreshBackend}
+        message="Syncing engineer work orders with live Render backend..."
+      />
+
       {/* Header */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -83,8 +101,11 @@ export const EngineerDashboard: React.FC<EngineerDashboardProps> = ({ onSelectCo
               <Wrench className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                Engineer Work Orders: {currentUser.name}
+              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>Engineer Work Orders: {currentUser.name}</span>
+                {isLoadingBackend && (
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                )}
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
                 {currentUser.department || 'Roads & Asphalt Pavement Div'} · SDG 11 Maintenance Portal
@@ -93,6 +114,16 @@ export const EngineerDashboard: React.FC<EngineerDashboardProps> = ({ onSelectCo
           </div>
 
           <div className="flex items-center gap-2 text-xs">
+            <button
+              onClick={refreshBackend}
+              disabled={isLoadingBackend}
+              className="px-2.5 py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 hover:bg-slate-50 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer mr-1"
+              title="Refresh work orders from backend"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBackend ? 'animate-spin text-amber-600' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+
             <span className="bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-lg">
               {activeTasks.length} Active Work Orders
             </span>
@@ -110,7 +141,9 @@ export const EngineerDashboard: React.FC<EngineerDashboardProps> = ({ onSelectCo
           <span>Active Assigned Tasks ({activeTasks.length})</span>
         </div>
 
-        {activeTasks.length === 0 ? (
+        {isLoadingBackend && activeTasks.length === 0 ? (
+          <EngineerWorkOrderSkeleton count={2} />
+        ) : activeTasks.length === 0 ? (
           <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center text-slate-500 text-xs">
             <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
             <p className="font-semibold text-slate-700">All Assigned Repairs Completed!</p>

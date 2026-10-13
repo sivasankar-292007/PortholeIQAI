@@ -14,8 +14,11 @@ import {
   ChevronRight,
   ExternalLink,
   Layers,
-  ArrowRight
+  ArrowRight,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
+import { ComplaintListSkeleton, BackendSyncBanner } from './LoadingSkeleton';
 
 interface OfficerDashboardProps {
   onSelectComplaint: (complaint: Complaint) => void;
@@ -30,7 +33,9 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
     reopenComplaint,
     calculateDaysIgnored,
     emailLogs,
-    retryEmailNotification
+    retryEmailNotification,
+    isLoadingBackend,
+    refreshBackend
   } = usePothole();
 
   // Assignment Modal State
@@ -101,6 +106,13 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-4">
+      {/* Backend Sync Banner */}
+      <BackendSyncBanner
+        isLoading={isLoadingBackend}
+        onRefresh={refreshBackend}
+        message="Syncing municipal complaints with Render backend..."
+      />
+
       {/* Officer Header matching video: "Officer panel" */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -109,8 +121,11 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
               <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-700 flex items-center justify-center">
                 <ShieldCheck className="w-5 h-5" />
               </div>
-              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                Officer panel
+              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>Officer panel</span>
+                {isLoadingBackend && (
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                )}
               </h1>
             </div>
             {/* Exact subtext matching video screenshot 36 */}
@@ -119,29 +134,41 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
             </p>
           </div>
 
-          {/* Sub-tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+          {/* Sub-tabs & Refresh */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setActiveTab('roster')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                activeTab === 'roster'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={refreshBackend}
+              disabled={isLoadingBackend}
+              className="px-2.5 py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Refresh from backend"
             >
-              Complaints Action
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBackend ? 'animate-spin text-amber-600' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
             </button>
-            <button
-              onClick={() => setActiveTab('emails')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'emails'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Mail className="w-3.5 h-3.5 text-amber-600" />
-              <span>Municipal Alerts ({emailLogs.length})</span>
-            </button>
+
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+              <button
+                onClick={() => setActiveTab('roster')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  activeTab === 'roster'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Complaints Action
+              </button>
+              <button
+                onClick={() => setActiveTab('emails')}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'emails'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Mail className="w-3.5 h-3.5 text-amber-600" />
+                <span>Municipal Alerts ({emailLogs.length})</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -173,7 +200,14 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
       {/* Main Roster or Email Logs */}
       {activeTab === 'roster' ? (
         <div className="space-y-3">
-          {complaints.map((c) => {
+          {isLoadingBackend && complaints.length === 0 ? (
+            <ComplaintListSkeleton count={4} />
+          ) : complaints.length === 0 ? (
+            <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center text-slate-500 text-xs">
+              No complaints in municipal queue.
+            </div>
+          ) : (
+            complaints.map((c) => {
             const days = calculateDaysIgnored(c);
             const isFixed = c.status === 'Completed';
 
@@ -289,7 +323,7 @@ export const OfficerDashboard: React.FC<OfficerDashboardProps> = ({ onSelectComp
                 </div>
               </div>
             );
-          })}
+          }))}
         </div>
       ) : (
         /* Municipal Dispatch Email Logs Inspector */

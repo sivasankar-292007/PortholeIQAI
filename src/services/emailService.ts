@@ -1,4 +1,5 @@
 import { Complaint, EmailNotificationLog } from '../types';
+import { apiService } from './apiService';
 
 /**
  * Service handling municipal email notifications.
@@ -106,21 +107,12 @@ Action Required: Please assign a ward maintenance engineer in the PotholeIQ Offi
     let errorMessage: string | undefined = undefined;
 
     try {
-      const response = await fetch('/api/send-complaint-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(complaintData),
-      });
-
-      const result = await response.json().catch(() => null);
-
-      if (response.ok && result?.success) {
+      const result = await apiService.sendComplaintEmail(complaintData);
+      if (result.success) {
         logStatus = 'sent';
       } else {
         logStatus = 'failed';
-        errorMessage = result?.error || `Email dispatch failed (HTTP ${response.status})`;
+        errorMessage = result.error || 'Email dispatch failed';
       }
     } catch (err: any) {
       logStatus = 'failed';
@@ -166,23 +158,23 @@ Action Required: Please assign a ward maintenance engineer in the PotholeIQ Offi
     }
 
     try {
-      const response = await fetch('/api/send-complaint-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(log.complaintData),
+      const result = await apiService.sendComplaintEmail({
+        complaintId: log.complaintData.complaintId || log.complaintId,
+        reporterName: log.complaintData.reporterName,
+        severity: log.complaintData.severity,
+        aiConfidence: log.complaintData.aiConfidence,
+        latitude: log.complaintData.latitude,
+        longitude: log.complaintData.longitude,
+        photoUrl: log.complaintData.photoUrl,
+        address: log.complaintData.address,
       });
-
-      const result = await response.json().catch(() => null);
-
-      if (response.ok && result?.success) {
+      if (result.success) {
         log.status = 'sent';
         log.errorMessage = undefined;
         log.sentAt = new Date().toISOString();
       } else {
         log.status = 'failed';
-        log.errorMessage = result?.error || `Retry failed (HTTP ${response.status})`;
+        log.errorMessage = result.error || 'Retry failed';
       }
     } catch (err: any) {
       log.status = 'failed';

@@ -55,22 +55,54 @@ export class FirebaseAuthService {
       );
     }
 
-    const credential = await signInWithEmailAndPassword(auth, email, pass);
-    const fbUser = credential.user;
-
-    // Fetch user profile from Firestore (authoritative role is stored here)
-    let profile = await firebaseDataService.getUserProfileDoc(fbUser.uid);
-    if (!profile) {
-      profile = {
-        id: fbUser.uid,
-        email: fbUser.email || email,
-        name: fbUser.displayName || email.split('@')[0],
-        role: 'citizen'
-      };
-      await firebaseDataService.saveUserProfileDoc(profile);
+    const cleanEmail = (email || '').trim();
+    if (!cleanEmail) {
+      const err = new Error('Please enter a valid email address.');
+      (err as any).code = 'auth/invalid-email';
+      throw err;
     }
 
-    return profile;
+    if (!pass || pass.length < 6) {
+      const err = new Error('Password should be at least 6 characters.');
+      (err as any).code = 'auth/weak-password';
+      throw err;
+    }
+
+    try {
+      const credential = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      const fbUser = credential.user;
+
+      // Fetch user profile from Firestore (authoritative role is stored here)
+      let profile = await firebaseDataService.getUserProfileDoc(fbUser.uid);
+      if (!profile) {
+        profile = {
+          id: fbUser.uid,
+          email: fbUser.email || cleanEmail,
+          name: fbUser.displayName || cleanEmail.split('@')[0],
+          role: 'citizen'
+        };
+        await firebaseDataService.saveUserProfileDoc(profile);
+      }
+
+      return profile;
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (
+        code === 'auth/invalid-credential' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found'
+      ) {
+        const error = new Error('Invalid email or password. Please check your credentials.');
+        (error as any).code = code;
+        throw error;
+      }
+      if (code === 'auth/weak-password') {
+        const error = new Error('Password should be at least 6 characters.');
+        (error as any).code = code;
+        throw error;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -91,27 +123,55 @@ export class FirebaseAuthService {
       );
     }
 
-    const credential = await createUserWithEmailAndPassword(auth, email, pass);
-    const fbUser = credential.user;
+    const cleanEmail = (email || '').trim();
+    if (!cleanEmail) {
+      const err = new Error('Please enter a valid email address.');
+      (err as any).code = 'auth/invalid-email';
+      throw err;
+    }
 
-    // Update display name in Firebase Auth
-    await updateProfile(fbUser, { displayName });
+    if (!pass || pass.length < 6) {
+      const error = new Error('Password should be at least 6 characters.');
+      (error as any).code = 'auth/weak-password';
+      throw error;
+    }
 
-    // Strict security: All public sign-ups are created as 'citizen'
-    const newProfile: UserProfile = {
-      id: fbUser.uid,
-      email: fbUser.email || email,
-      name: displayName,
-      role: 'citizen',
-      ward: extra?.ward,
-      department: extra?.department,
-      phone: extra?.phone
-    };
+    try {
+      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+      const fbUser = credential.user;
 
-    // Save user profile in Firestore 'users' collection
-    await firebaseDataService.saveUserProfileDoc(newProfile);
+      // Update display name in Firebase Auth
+      await updateProfile(fbUser, { displayName: displayName.trim() || cleanEmail.split('@')[0] });
 
-    return newProfile;
+      // Strict security: All public sign-ups are created as 'citizen'
+      const newProfile: UserProfile = {
+        id: fbUser.uid,
+        email: fbUser.email || cleanEmail,
+        name: displayName.trim() || cleanEmail.split('@')[0],
+        role: 'citizen',
+        ward: extra?.ward,
+        department: extra?.department,
+        phone: extra?.phone
+      };
+
+      // Save user profile in Firestore 'users' collection
+      await firebaseDataService.saveUserProfileDoc(newProfile);
+
+      return newProfile;
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (code === 'auth/weak-password') {
+        const error = new Error('Password should be at least 6 characters.');
+        (error as any).code = code;
+        throw error;
+      }
+      if (code === 'auth/email-already-in-use') {
+        const error = new Error('An account with this email already exists. Please sign in instead.');
+        (error as any).code = code;
+        throw error;
+      }
+      throw err;
+    }
   }
 
   /**

@@ -50,30 +50,103 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    const cleanEmail = (email || '').trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMsg('Please enter a valid email address.');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setErrorMsg('Password should be at least 6 characters.');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       if (mode === 'login') {
-        await loginWithFirebase(email, password);
+        await loginWithFirebase(cleanEmail, password);
         setSuccessMsg('Successfully logged in!');
         setTimeout(() => onClose(), 1000);
       } else {
-        await registerWithFirebase(email, password, displayName, role, {
-          ward: role === 'citizen' ? deptOrWard : undefined,
-          department: role !== 'citizen' ? deptOrWard : undefined,
-          phone,
-          staffCode: role !== 'citizen' ? staffCode : undefined
-        });
-        setSuccessMsg('Account registered and profile created in Cloud Firestore!');
-        setTimeout(() => onClose(), 1200);
+        try {
+          await registerWithFirebase(
+            cleanEmail,
+            password,
+            displayName.trim() || cleanEmail.split('@')[0],
+            role,
+            {
+              ward: role === 'citizen' ? deptOrWard : undefined,
+              department: role !== 'citizen' ? deptOrWard : undefined,
+              phone,
+              staffCode: role !== 'citizen' ? staffCode : undefined
+            }
+          );
+          setSuccessMsg('Account registered and profile created in Cloud Firestore!');
+          setTimeout(() => onClose(), 1200);
+        } catch (regErr: any) {
+          const code = regErr?.code || '';
+          const msg = regErr?.message || '';
+          const isEmailInUse =
+            code === 'auth/email-already-in-use' ||
+            msg.includes('email-already-in-use') ||
+            msg.includes('already exists') ||
+            msg.includes('already in use');
+
+          if (isEmailInUse) {
+            // Attempt automatic sign-in if the account already exists
+            try {
+              await loginWithFirebase(cleanEmail, password);
+              setSuccessMsg('Existing account detected. Successfully logged in!');
+              setTimeout(() => onClose(), 1000);
+              return;
+            } catch {
+              // If password differs, cleanly guide the user to Sign In
+              setMode('login');
+              setErrorMsg('An account with this email already exists. Please enter your password to sign in.');
+              return;
+            }
+          }
+          throw regErr;
+        }
       }
     } catch (err: any) {
-      console.error('Auth error:', err);
-      setErrorMsg(err.message || 'Authentication failed. Please check credentials.');
+      const code = err?.code || '';
+      const msg = err?.message || '';
+
+      let friendly = 'Authentication failed. Please check credentials.';
+      if (code === 'auth/weak-password' || msg.includes('weak-password') || msg.includes('least 6 characters')) {
+        friendly = 'Password should be at least 6 characters.';
+      } else if (
+        code === 'auth/email-already-in-use' ||
+        msg.includes('email-already-in-use') ||
+        msg.includes('already in use')
+      ) {
+        friendly = 'An account with this email already exists. Please sign in instead.';
+      } else if (
+        code === 'auth/invalid-credential' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found' ||
+        msg.includes('invalid-credential') ||
+        msg.includes('wrong-password')
+      ) {
+        friendly = 'Invalid email or password. Please verify your credentials.';
+      } else if (code === 'auth/too-many-requests' || msg.includes('too-many-requests')) {
+        friendly = 'Access temporarily restricted due to multiple attempts. Please try again later.';
+      } else if (msg) {
+        friendly = msg.replace(/^Firebase:\s*/i, '').replace(/\(auth\/[a-z0-9-]+\)\.?/i, '').trim() || friendly;
+      }
+
+      setErrorMsg(friendly);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleQuickDemoFill = (selectedRole: UserRole) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setMode('login'); // Pre-existing demo accounts use Sign In
     if (selectedRole === 'citizen') {
       setEmail('anand.v@gmail.com');
       setPassword('CitizenPass123!');
@@ -219,9 +292,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           </div>
 
           {errorMsg && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+              {mode === 'register' && errorMsg.includes('already') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setErrorMsg(null);
+                  }}
+                  className="shrink-0 text-amber-700 hover:text-amber-900 font-bold underline cursor-pointer"
+                >
+                  Sign In
+                </button>
+              )}
             </div>
           )}
 
@@ -245,7 +332,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                       required
                       placeholder="e.g. Anand Verma"
                       value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
+                      onChange={(e) => {
+                        setDisplayName(e.target.value);
+                        if (errorMsg) setErrorMsg(null);
+                      }}
                       className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:border-amber-500"
                     />
                   </div>
@@ -278,22 +368,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   required
                   placeholder="name@smartcity.gov or email@domain.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (errorMsg) setErrorMsg(null);
+                  }}
                   className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:border-amber-500"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Password</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-bold text-slate-700">Password</label>
+                <span className="text-[10px] text-slate-400">Min. 6 characters</span>
+              </div>
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="password"
                   required
+                  minLength={6}
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (errorMsg) setErrorMsg(null);
+                  }}
                   className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:border-amber-500"
                 />
               </div>
