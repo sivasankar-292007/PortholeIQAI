@@ -1,0 +1,8 @@
+{
+  "name": "PotholeIQ — AI-Powered Smart Road Monitoring Platform",
+  "description": "AI-powered pothole reporting and public road repair tracking platform for SDG 11 Sustainable Cities and Communities with citizen, municipal, and engineer dashboards.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

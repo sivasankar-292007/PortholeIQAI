@@ -1,0 +1,128 @@
+import { Complaint } from '../types';
+import { SAMPLE_IMAGES } from '../data/sampleImages';
+
+// Sample pothole locations for the PotholeIQ Chennai map.
+// Fully implements the Complaint interface for PublicMap.tsx and public audit views.
+export const chennaiSampleComplaints: Complaint[] = [
+  {
+    id: 'CHN-001',
+    reporterId: 'cit-sample-chennai-1',
+    reporterName: 'Karthik Raman',
+    reporterEmail: 'karthik.r@example.com',
+    photoUrl: SAMPLE_IMAGES.severePothole,
+    latitude: 13.0108,
+    longitude: 80.2206,
+    address: 'Guindy Industrial Estate Main Rd, Chennai',
+    landmark: 'Near Guindy Railway Station',
+    ward: 'Zone 13 - Guindy',
+    aiPrediction: 'pothole',
+    aiConfidence: 0.94,
+    estimatedSeverity: 'High',
+    boxCoveragePercent: 42,
+    aiDetails: {
+      estimatedDepthCm: 14,
+      hazardRisk: 'Severe',
+      analysisMode: 'mobilenet-edge-tensor',
+      featuresFound: ['Deep Bitumen Cavity', 'Jagged Edge Fractures', 'Standing Water Risk']
+    },
+    status: 'Pending',
+    priority: 'High',
+    daysIgnored: 5,
+    submittedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+    notificationStatus: 'sent'
+  },
+  {
+    id: 'CHN-002',
+    reporterId: 'cit-sample-chennai-2',
+    reporterName: 'Deepa Narayanan',
+    reporterEmail: 'deepa.n@example.com',
+    photoUrl: SAMPLE_IMAGES.moderatePothole,
+    latitude: 13.0335,
+    longitude: 80.2697,
+    address: 'Anna Salai (Mount Road), Thousand Lights, Chennai',
+    landmark: 'Near Thousand Lights Mosque',
+    ward: 'Zone 9 - Anna Salai',
+    aiPrediction: 'pothole',
+    aiConfidence: 0.88,
+    estimatedSeverity: 'Medium',
+    boxCoveragePercent: 28,
+    aiDetails: {
+      estimatedDepthCm: 8,
+      hazardRisk: 'Moderate',
+      analysisMode: 'mobilenet-edge-tensor',
+      featuresFound: ['Surface Ravelling', 'Edge Spalling']
+    },
+    status: 'In Progress',
+    priority: 'Normal',
+    daysIgnored: 2,
+    assignedEngineerId: 'eng-1',
+    assignedEngineerName: 'Eng. Rajesh Kumar',
+    assignedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    repairStartedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    repairDeadline: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    submittedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    notificationStatus: 'sent'
+  },
+  {
+    id: 'CHN-003',
+    reporterId: 'cit-sample-chennai-3',
+    reporterName: 'Sanjay Krishnan',
+    reporterEmail: 'sanjay.k@example.com',
+    photoUrl: SAMPLE_IMAGES.severePothole,
+    afterPhotoUrl: SAMPLE_IMAGES.repairedRoad,
+    latitude: 13.0067,
+    longitude: 80.2565,
+    address: 'Sardar Patel Road, Adyar, Chennai',
+    landmark: 'Near IIT Madras Gate',
+    ward: 'Zone 13 - Adyar',
+    aiPrediction: 'pothole',
+    aiConfidence: 0.96,
+    estimatedSeverity: 'Low',
+    boxCoveragePercent: 35,
+    aiDetails: {
+      estimatedDepthCm: 11,
+      hazardRisk: 'Moderate',
+      analysisMode: 'mobilenet-edge-tensor',
+      featuresFound: ['Repaired Surface', 'Bitumen Overlay Seal']
+    },
+    status: 'Completed',
+    priority: 'Normal',
+    daysIgnored: 0,
+    assignedEngineerId: 'eng-2',
+    assignedEngineerName: 'Eng. Priya Sharma',
+    assignedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+    repairStartedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+    repairNotes: 'Crater excavated to sound base, primed with tack coat, and compacted with 50mm hot-mix asphalt (VG-30). Surface level and sealed.',
+    repairMaterialsUsed: 'Hot-mix Bitumen VG-30, Aggregate 20mm & 10mm, Tack Coat CSS-1h',
+    submittedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+    notificationStatus: 'sent'
+  },
+  {
+    id: 'CHN-004',
+    reporterId: 'cit-sample-chennai-4',
+    reporterName: 'Meenakshi Sundaram',
+    reporterEmail: 'meenakshi.s@example.com',
+    photoUrl: SAMPLE_IMAGES.severePothole,
+    latitude: 13.0827,
+    longitude: 80.2707,
+    address: 'EVR Periyar Salai (Poonamallee High Rd), Chennai Central',
+    landmark: 'Opposite Chennai Central Railway Station',
+    ward: 'Zone 5 - Royapuram',
+    aiPrediction: 'pothole',
+    aiConfidence: 0.98,
+    estimatedSeverity: 'High',
+    boxCoveragePercent: 50,
+    aiDetails: {
+      estimatedDepthCm: 16,
+      hazardRisk: 'Critical',
+      analysisMode: 'mobilenet-edge-tensor',
+      featuresFound: ['Deep Structural Crater', 'Heavy Traffic Vibration Damage']
+    },
+    status: 'Pending',
+    priority: 'Urgent',
+    daysIgnored: 8,
+    submittedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+    notificationStatus: 'sent'
+  }
+];

@@ -1,0 +1,443 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================================================
+    // CORE AUTHENTICATION & ROLE-BASED ACCESS CONTROL (RBAC)
+    // Role verification strictly checks authoritative /users documents.
+    // NEVER trusts client tokens, spoofable domains, or client-side storage.
+    // =====================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isRole(targetRole) {
+      return isAuthenticated() && userDocExists() && getUserData().role == targetRole;
+    }
+
+    function isMunicipalOfficer() {
+      return isRole('officer');
+    }
+
+    function isEngineer() {
+      return isRole('engineer');
+    }
+
+    // Helper to verify if the requesting engineer is assigned to the report
+    function isAssignedEngineerForReport(reportId) {
+      let isPothole = exists(/databases/$(database)/documents/potholes/$(reportId));
+      let isComplaint = exists(/databases/$(database)/documents/complaints/$(reportId));
+      return isEngineer() && (
+        (isPothole && get(/databases/$(database)/documents/potholes/$(reportId)).data.assignedEngineerId == request.auth.uid) ||
+        (isComplaint && get(/databases/$(database)/documents/complaints/$(reportId)).data.assignedEngineerId == request.auth.uid)
+      );
+    }
+
+    // =====================================================================
+    // 1. USERS COLLECTION (/users/{userId})
+    // Protects citizen PII and enforces strict role immutability.
+    // =====================================================================
+    match /users/{userId} {
+      // Private User Profiles: Users can only read their own profile;
+      // Municipal Officers can view user profiles to manage department rosters.
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isMunicipalOfficer());
+
+      // STRICT ROLE IMMUTABILITY ON REGISTRATION:
+      // Any new user registering through the app is strictly restricted to role == 'citizen'.
+      // Public users can NEVER assign themselves 'officer' or 'engineer' roles.
+      allow create: if isAuthenticated() && request.auth.uid == userId &&
+        request.resource.data.role == 'citizen';
+
+      // ROLE TAMPERING PREVENTION:
+      // Regular users can update their profile (display name, phone, ward),
+      // but they are strictly forbidden from modifying the 'role' field.
+      // Only an authorized Municipal Officer can change user roles.
+      allow update: if isAuthenticated() && (
+        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])) ||
+        isMunicipalOfficer()
+      );
+
+      // Account deletion restricted to Municipal Officers
+      allow delete: if isMunicipalOfficer();
+    }
+
+    // =====================================================================
+    // 2. SANITIZED PUBLIC SUMMARY COLLECTIONS
+    // (/publicPotholes/{potholeId} and /publicComplaints/{complaintId})
+    // SAFE PUBLIC DATA MODEL: Exposes pins, damage severity, and before/after proof.
+    // STRICT PRIVACY: ZERO exposure of reporterId, reporterEmail, reporterName, officerNotes.
+    // =====================================================================
+
+    // Helper to verify that a matching authoritative report exists or is committed in the same batch
+    // and that the author is the currently authenticated citizen.
+    function hasMatchingAuthoritativeReport(reportId) {
+      let potholeExists = existsAfter(/databases/$(database)/documents/potholes/$(reportId));
+      let complaintExists = existsAfter(/databases/$(database)/documents/complaints/$(reportId));
+      return (potholeExists && getAfter(/databases/$(database)/documents/potholes/$(reportId)).data.reporterId == request.auth.uid) ||
+             (complaintExists && getAfter(/databases/$(database)/documents/complaints/$(reportId)).data.reporterId == request.auth.uid);
+    }
+
+    // EXPLICIT APPROVED PUBLIC FIELDS:
+    // Only civic information (GPS, photos, severity, ward, timestamps, repair proof) can exist in public summaries.
+    // Citizen PII (reporterId, reporterEmail, reporterName, reporterPhone, officerNotes) is strictly forbidden.
+    function isApprovedPublicSummaryKeys(dataKeys) {
+      return dataKeys.hasOnly([
+        'id',
+        'photoUrl',
+        'latitude',
+        'longitude',
+        'address',
+        'landmark',
+        'ward',
+        'status',
+        'aiPrediction',
+        'aiConfidence',
+        'estimatedSeverity',
+        'boxCoveragePercent',
+        'submittedAt',
+        'daysIgnored',
+        'priority',
+        'repairDeadline',
+        'assignedEngineerName',
+        'repairStartedAt',
+        'afterPhotoUrl',
+        'repairNotes',
+        'repairMaterialsUsed',
+        'completedAt',
+        'updatedAt',
+        'serverTimestamp'
+      ]);
+    }
+
+    function isValidPublicSummaryCreate() {
+      return isAuthenticated() &&
+        request.resource.data.status == 'Pending' &&
+        request.resource.data.latitude is number &&
+        request.resource.data.longitude is number &&
+        request.resource.data.photoUrl is string &&
+        // Whitelist approved public keys only:
+        isApprovedPublicSummaryKeys(request.resource.data.keys()) &&
+        // Explicitly ban all citizen personal information and officer internal fields:
+        !('reporterId' in request.resource.data) &&
+        !('reporterEmail' in request.resource.data) &&
+        !('reporterName' in request.resource.data) &&
+        !('reporterPhone' in request.resource.data) &&
+        !('officerNotes' in request.resource.data) &&
+        !('assignedEngineerId' in request.resource.data) &&
+        !('assignedEngineerEmail' in request.resource.data) &&
+        !('afterPhotoUrl' in request.resource.data) &&
+        !('completedAt' in request.resource.data);
+    }
+
+    // Permitted fields an assigned engineer can mirror into public summaries
+    function isPermittedEngineerPublicUpdate(reportId) {
+      let allowedEngineerPublicKeys = [
+        'status',
+        'repairStartedAt',
+        'afterPhotoUrl',
+        'repairNotes',
+        'repairMaterialsUsed',
+        'completedAt',
+        'updatedAt'
+      ];
+      return isAssignedEngineerForReport(reportId) &&
+        request.resource.data.status in ['In Progress', 'Completed'] &&
+        // Validate the ENTIRE resulting document has only approved public summary keys:
+        isApprovedPublicSummaryKeys(request.resource.data.keys()) &&
+        // Validate only permitted repair fields are changed:
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedEngineerPublicKeys) &&
+        // Ensure no private fields are leaked during engineer updates:
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'reporterId', 'reporterEmail', 'reporterName', 'reporterPhone', 'officerNotes'
+        ]);
+    }
+
+    // Permitted fields an authorized municipal officer can update on public summaries
+    function isPermittedOfficerPublicUpdate() {
+      let allowedOfficerPublicKeys = [
+        'status',
+        'priority',
+        'repairDeadline',
+        'assignedEngineerName',
+        'repairStartedAt',
+        'afterPhotoUrl',
+        'repairNotes',
+        'repairMaterialsUsed',
+        'completedAt',
+        'updatedAt'
+      ];
+      return isMunicipalOfficer() &&
+        // Officer can only transition to valid workflow statuses:
+        request.resource.data.status in ['Pending', 'Assigned', 'In Progress', 'Completed', 'Rejected'] &&
+        // Validate the ENTIRE resulting document has only approved public summary keys:
+        isApprovedPublicSummaryKeys(request.resource.data.keys()) &&
+        // Validate only permitted public keys are changed:
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedOfficerPublicKeys) &&
+        // Officer notes and citizen details must NEVER be added to public summaries:
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'reporterId', 'reporterEmail', 'reporterName', 'reporterPhone', 'officerNotes'
+        ]);
+    }
+
+    match /publicPotholes/{potholeId} {
+      // Public Map read access: Anyone (including unauthenticated visitors) can safely read
+      allow read: if true;
+
+      // Authenticated citizen filing a report can create the sanitized public summary ONLY IF
+      // a matching authoritative report is created in the same atomic batch by this authenticated user.
+      // Municipal Officers may also create public summaries (e.g., during administrative review).
+      allow create: if (isValidPublicSummaryCreate() && hasMatchingAuthoritativeReport(potholeId)) ||
+        (isMunicipalOfficer() && isApprovedPublicSummaryKeys(request.resource.data.keys()));
+
+      // Updates restricted to Officers or the Assigned Engineer (strictly approved public fields, entire doc validated)
+      allow update: if isAuthenticated() && (
+        isPermittedOfficerPublicUpdate() ||
+        isPermittedEngineerPublicUpdate(potholeId)
+      );
+
+      // Deletions restricted to Municipal Officers
+      allow delete: if isMunicipalOfficer();
+    }
+
+    match /publicComplaints/{complaintId} {
+      allow read: if true;
+      allow create: if (isValidPublicSummaryCreate() && hasMatchingAuthoritativeReport(complaintId)) ||
+        (isMunicipalOfficer() && isApprovedPublicSummaryKeys(request.resource.data.keys()));
+      allow update: if isAuthenticated() && (
+        isPermittedOfficerPublicUpdate() ||
+        isPermittedEngineerPublicUpdate(complaintId)
+      );
+      allow delete: if isMunicipalOfficer();
+    }
+
+    // =====================================================================
+    // 3. AUTHORITATIVE INTERNAL COLLECTIONS
+    // (/potholes/{potholeId} and /complaints/{complaintId})
+    // Full records containing citizen information and officer audit notes.
+    // ACCESS RESTRICTED: Never readable by unauthenticated users or public map.
+    // =====================================================================
+
+    function isValidAuthoritativeReportCreate() {
+      return isAuthenticated() &&
+        request.resource.data.reporterId == request.auth.uid &&
+        request.resource.data.status == 'Pending' &&
+        request.resource.data.latitude is number &&
+        request.resource.data.longitude is number &&
+        request.resource.data.photoUrl is string &&
+        !('assignedEngineerId' in request.resource.data) &&
+        !('completedAt' in request.resource.data) &&
+        !('afterPhotoUrl' in request.resource.data);
+    }
+
+    // Safe comparison helper that handles missing/optional fields gracefully without runtime errors
+    function safeFieldUnchanged(fieldName) {
+      return (!(fieldName in resource.data) && !(fieldName in request.resource.data)) ||
+             (fieldName in resource.data && fieldName in request.resource.data && request.resource.data[fieldName] == resource.data[fieldName]);
+    }
+
+    // STRICT FIELD-LEVEL PERMISSION FOR ASSIGNED ENGINEERS:
+    // Permitted fields: status, repairStartedAt, afterPhotoUrl, repairNotes, repairMaterialsUsed, completedAt, updatedAt
+    // PROTECTED FIELDS (CANNOT CHANGE): reporterId, assignedEngineerId, priority, repairDeadline, officerNotes, coordinates
+    // Safely handles optional fields (such as repairDeadline or priority) if absent
+    function isPermittedEngineerReportUpdate() {
+      let allowedEngineerKeys = [
+        'status',
+        'repairStartedAt',
+        'afterPhotoUrl',
+        'repairNotes',
+        'repairMaterialsUsed',
+        'completedAt',
+        'updatedAt'
+      ];
+      return isEngineer() &&
+        resource.data.assignedEngineerId == request.auth.uid &&
+        request.resource.data.status in ['In Progress', 'Completed'] &&
+        // ONLY permitted repair fields may be touched:
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedEngineerKeys) &&
+        // Protected fields are strictly verified to remain identical or remain omitted:
+        request.resource.data.assignedEngineerId == resource.data.assignedEngineerId &&
+        request.resource.data.reporterId == resource.data.reporterId &&
+        request.resource.data.submittedAt == resource.data.submittedAt &&
+        request.resource.data.latitude == resource.data.latitude &&
+        request.resource.data.longitude == resource.data.longitude &&
+        safeFieldUnchanged('priority') &&
+        safeFieldUnchanged('repairDeadline') &&
+        safeFieldUnchanged('officerNotes');
+    }
+
+    // Officers can update assignments, deadlines, priority, notes, and workflow status
+    function isPermittedOfficerReportUpdate() {
+      return isMunicipalOfficer() &&
+        // Officer can only set recognized valid workflow statuses:
+        request.resource.data.status in ['Pending', 'Assigned', 'In Progress', 'Completed', 'Rejected'] &&
+        // Officer cannot alter the original citizen report submission identity, location, or creation timestamp
+        request.resource.data.reporterId == resource.data.reporterId &&
+        request.resource.data.submittedAt == resource.data.submittedAt &&
+        request.resource.data.latitude == resource.data.latitude &&
+        request.resource.data.longitude == resource.data.longitude;
+    }
+
+    match /potholes/{potholeId} {
+      // PRIVATE ACCESS ONLY:
+      // Readable ONLY by the author citizen, municipal officers, or assigned engineer
+      allow read: if isAuthenticated() && (
+        resource.data.reporterId == request.auth.uid ||
+        isMunicipalOfficer() ||
+        (isEngineer() && resource.data.assignedEngineerId == request.auth.uid)
+      );
+
+      // Authenticated citizen can submit a new report
+      allow create: if isValidAuthoritativeReportCreate();
+
+      // Updates restricted to Municipal Officers and the Assigned Engineer (field-restricted)
+      allow update: if isAuthenticated() && (
+        isPermittedOfficerReportUpdate() ||
+        isPermittedEngineerReportUpdate()
+      );
+
+      // Deletions restricted to Municipal Officers
+      allow delete: if isMunicipalOfficer();
+    }
+
+    match /complaints/{complaintId} {
+      allow read: if isAuthenticated() && (
+        resource.data.reporterId == request.auth.uid ||
+        isMunicipalOfficer() ||
+        (isEngineer() && resource.data.assignedEngineerId == request.auth.uid)
+      );
+      allow create: if isValidAuthoritativeReportCreate();
+      allow update: if isAuthenticated() && (
+        isPermittedOfficerReportUpdate() ||
+        isPermittedEngineerReportUpdate()
+      );
+      allow delete: if isMunicipalOfficer();
+    }
+
+    // =====================================================================
+    // 4. IN-APP NOTIFICATIONS COLLECTION (/notifications/{notificationId})
+    // Validates sender authority, recipient existence, and legitimate workflows.
+    // Ordinary citizens CANNOT send arbitrary messages to random users.
+    // =====================================================================
+
+    // Verifies notification is part of a legitimate workflow:
+    // 1. Municipal Officers can notify anyone (citizens, engineers) regarding complaints
+    // 2. Assigned Engineers can notify the report's author or municipal officers regarding progress
+    // 3. Citizens can only create notifications for themselves (e.g. submission confirmations)
+    function isAuthorizedNotificationSender() {
+      let complaintId = request.resource.data.complaintId;
+      let hasPothole = exists(/databases/$(database)/documents/potholes/$(complaintId));
+      let hasComplaint = exists(/databases/$(database)/documents/complaints/$(complaintId));
+
+      return isMunicipalOfficer() ||
+        // Citizen can notify themselves for submission receipts
+        (request.resource.data.recipientId == request.auth.uid) ||
+        // Assigned engineer can notify the citizen or officer about their assigned task
+        (isEngineer() && (
+          (hasPothole && get(/databases/$(database)/documents/potholes/$(complaintId)).data.assignedEngineerId == request.auth.uid) ||
+          (hasComplaint && get(/databases/$(database)/documents/complaints/$(complaintId)).data.assignedEngineerId == request.auth.uid)
+        ));
+    }
+
+    match /notifications/{notificationId} {
+      // Recipient can read their own notifications; Officers can audit
+      allow read: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid || isMunicipalOfficer()
+      );
+
+      // SECURE CREATION VALIDATION:
+      // - Must be authenticated sender
+      // - Sender must be authorized for this notification workflow (no arbitrary harassment or citizen spam)
+      // - Must validate recipientId exists in authoritative /users collection
+      // - Must only contain permitted schema fields
+      // - Initial 'read' boolean must be false
+      allow create: if isAuthenticated() &&
+        isAuthorizedNotificationSender() &&
+        request.resource.data.keys().hasOnly([
+          'id',
+          'recipientId',
+          'senderId',
+          'title',
+          'message',
+          'type',
+          'complaintId',
+          'read',
+          'createdAt',
+          'serverTimestamp'
+        ]) &&
+        request.resource.data.recipientId is string &&
+        request.resource.data.recipientId.size() > 0 &&
+        exists(/databases/$(database)/documents/users/$(request.resource.data.recipientId)) &&
+        request.resource.data.senderId == request.auth.uid &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() <= 200 &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() <= 2000 &&
+        request.resource.data.read == false &&
+        request.resource.data.type in [
+          'complaint_submitted',
+          'engineer_assigned',
+          'repair_started',
+          'repair_completed',
+          'complaint_reopened',
+          'status_update',
+          'urgent_alert'
+        ];
+
+      // Recipients can only mark their own notification as read
+      allow update: if isAuthenticated() &&
+        resource.data.recipientId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+        request.resource.data.read is bool;
+
+      // Recipients or Officers can delete notifications
+      allow delete: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid || isMunicipalOfficer()
+      );
+    }
+
+    // =====================================================================
+    // 5. MAIL QUEUE COLLECTION (/mail/{mailId})
+    // SECURE DISPATCH: Ordinary clients CANNOT create or inject mail documents.
+    // Prevents spam, phishing, and email queue abuse.
+    // Dispatches are generated server-side via Cloud Functions / Admin SDK.
+    // =====================================================================
+    match /mail/{mailId} {
+      // Only authorized Municipal Officers can inspect mail logs
+      allow read: if isMunicipalOfficer();
+
+      // Ordinary client users CANNOT create mail items.
+      // Only verified Municipal Officers may enqueue an official alert from the app,
+      // or dispatches are generated exclusively by backend Cloud Functions.
+      allow create: if isMunicipalOfficer() &&
+        request.resource.data.keys().hasOnly([
+          'to',
+          'message',
+          'complaintId',
+          'eventType',
+          'sentAt',
+          'status',
+          'serverTimestamp'
+        ]);
+
+      // Mail records cannot be modified or deleted by client apps
+      allow update, delete: if false;
+    }
+
+    // =====================================================================
+    // 6. DEFAULT DENY
+    // All other collections and paths are strictly blocked by default
+    // =====================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

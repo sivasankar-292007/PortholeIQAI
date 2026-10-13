@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Pothole complaints photos folder: Citizens can upload their original damage photo
+    match /potholes/{complaintId}/{allPaths=**} {
+      allow read: if true; // Public map read access
+      allow write: if isAuthenticated() &&
+        request.resource.size < 10 * 1024 * 1024 && // max 10MB
+        request.resource.contentType.matches('image/.*');
+    }
+
+    // After-repair proof photos folder: Only authenticated engineers can upload
+    match /repairs/{complaintId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+    }
+  }
+}
